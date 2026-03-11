@@ -1,42 +1,201 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+/* ── Reset ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+.container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #05091a;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+/* ── Gear wrapper ─────────────────────────────────────────────────────────── */
+.gear-wrap {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.7s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.gear-wrap.moved {
+  transform: translateX(-250px);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+/* ── SVG canvas ───────────────────────────────────────────────────────────── */
+.gear-svg {
+  width: clamp(300px, 54vmin, 500px);
+  height: clamp(300px, 54vmin, 500px);
+  overflow: visible;
+  filter: drop-shadow(0 0 28px rgba(56, 189, 248, 0.22));
 }
 
-.card {
-  padding: 2em;
+/* ── Gear SVG elements ────────────────────────────────────────────────────── */
+.gear-body {
+  fill: #0e2340;
+  stroke: #38bdf8;
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  transition: fill 0.3s;
 }
 
-.read-the-docs {
-  color: #888;
+.gear-hole {
+  fill: #05091a;
+  stroke: #1a3f60;
+  stroke-width: 1.5;
 }
+
+/* Tooth labels */
+.lbl {
+  fill: #4d7a99;
+  font-family: 'Courier New', monospace;
+  cursor: pointer;
+  user-select: none;
+  transition: fill 0.18s;
+  letter-spacing: 0.5px;
+}
+
+.lbl-on {
+  fill: #38bdf8;
+  font-weight: bold;
+}
+
+/* Centre text */
+.ctxt {
+  fill: #d4eeff;
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  letter-spacing: 5px;
+  cursor: pointer;
+  user-select: none;
+  transition: fill 0.2s, letter-spacing 0.2s;
+}
+
+.ctxt:hover  { fill: #38bdf8; }
+
+.ctxt-pulse {
+  fill: #38bdf8;
+  letter-spacing: 10px;
+  animation: pulse-txt 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes pulse-txt {
+  from { opacity: 0.5; }
+  to   { opacity: 1;   }
+}
+
+.centre-hit { cursor: pointer; }
+
+/* ── Info panel ───────────────────────────────────────────────────────────── */
+.panel {
+  position: absolute;
+  right: -440px;
+  top: 0;
+  width: 410px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 18px;
+  padding: 40px 28px 28px;
+  background: linear-gradient(150deg, rgba(5,9,26,0.97) 0%, rgba(8,18,46,0.96) 100%);
+  border-left: 1px solid #1a3a60;
+  backdrop-filter: blur(10px);
+  transition: right 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+.panel.panel-on {
+  right: 0;
+}
+
+/* Back button */
+.back-btn {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid #38bdf8;
+  color: #38bdf8;
+  padding: 7px 15px;
+  cursor: pointer;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  border-radius: 3px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.back-btn:hover {
+  background: #38bdf8;
+  color: #05091a;
+}
+
+/* Field name */
+.panel-title {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 5px;
+  color: #38bdf8;
+  text-transform: uppercase;
+}
+
+
+/* Key-value list */
+.panel-kv {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  background: rgba(56, 189, 248, 0.04);
+  border: 1px solid #1a3f60;
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(26, 63, 96, 0.5);
+}
+
+.kv-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.kv-key {
+  color: #38bdf8;
+  flex-shrink: 0;
+  max-width: 50%;
+  opacity: 0.85;
+}
+
+.kv-val {
+  color: #86efac;
+  text-align: right;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  max-width: 50%;
+}
+
+.kv-empty {
+  color: #263d55;
+  font-style: italic;
+}
+
+/* Status line */
+.panel-status {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: #263d55;
+  letter-spacing: 1px;
+}
+
