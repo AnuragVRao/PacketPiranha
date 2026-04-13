@@ -2,222 +2,301 @@
 launcher.py — run with: sudo python3 launcher.py
 Requires: pip install flask flask-socketio eventlet
 """
-
-import eventlet
-eventlet.monkey_patch()
-
 from flask import Flask, request
 from flask_socketio import SocketIO, emit
 import subprocess
 import threading
 import os
+import json
+import statistics
 
-app    = Flask(__name__)
+app = Flask(__name__)
 app.config["SECRET_KEY"] = "ebpf-secret"
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 EBPF_SCRIPT = os.path.join(os.path.dirname(__file__), "ebpf.py")
 
-# ── Packet parser ──────────────────────────────────────────────────────────────
+# ── Aggregate frames into OSI-layer structure ─────────────────────────────────
+def _aggregate(frames: list[dict]) -> dict:
+    """
+    Takes a list of raw captured frame dicts from ebpf.py and produces
+    a single aggregated packet object with real + derived stats per layer.
+    """
+    if not frames:
+        return {}
 
-def _parse_packet_lines(lines: list[str]) -> dict:
-    type_map = {
-        "ipVersion":      int,
-        "srcIP":          str,
-        "dstIP":          str,
-        "TTL":            int,
-        "protocol":       int,
-        "headerLength":   int,
-        "totalLength":    int,
-        "identification": int,
-        "fragmentOffset": int,
-        "DF":             lambda v: v == "True",
-        "MF":             lambda v: v == "True",
+    n = len(frames)
+
+    # ── helpers ──
+    def vals(key):
+        return [f[key] for f in frames if f.get(key) is not None]
+
+    def avg(key):
+        v = [x for x in vals(key) if isinstance(x, (int, float))]
+        return round(statistics.mean(v), 3) if v else None
+
+    def mn(key):
+        v = [x for x in vals(key) if isinstance(x, (int, float))]
+        return min(v) if v else None
+
+    def mx(key):
+        v = [x for x in vals(key) if isinstance(x, (int, float))]
+        return max(v) if v else None
+
+    def most_common(key):
+        v = vals(key)
+        return max(set(v), key=v.count) if v else None
+
+    def count_flag(flag_str):
+        return sum(1 for f in frames if flag_str in f.get("tcp_flags", ""))
+
+    # ── Layer 1 (physical — best-effort from interface) ──
+    layer1 = {
+        "interface":       frames[0].get("_iface", "eth0"),
+        "direction":       "ingress",
+        "packetsObserved": n,
+        "layer":           "Physical",
     }
-    result = {}
-    for line in lines:
-        line = line.strip()
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key, value = key.strip(), value.strip()
-        if key in type_map:
-            try:
-                result[key] = type_map[key](value)
-            except (ValueError, TypeError):
-                result[key] = value
-    return result
 
+    # ── Layer 2 (Data Link — real from eBPF) ──
+    src_macs = list(set(vals("src_mac")))
+    dst_macs = list(set(vals("dst_mac")))
+    layer2 = {
+        "srcMAC":          src_macs[0] if src_macs else "n/a",
+        "dstMAC":          dst_macs[0] if dst_macs else "n/a",
+        "uniqueSrcMACs":   len(src_macs),
+        "ethType":         most_common("eth_type") or "0x0800",
+        "framesCapured":   n,
+        "avgFrameLen":     avg("ip_tot_len"),   # IP total length (best proxy without L2 len)
+        "minFrameLen":     mn("ip_tot_len"),
+        "maxFrameLen":     mx("ip_tot_len"),
+    }
 
-def _build_packet(dest_ip: str, raw: dict) -> dict:
+    # ── Layer 3 (Network — real from eBPF) ──
     proto_map = {6: "TCP", 17: "UDP", 1: "ICMP"}
-    proto_str = proto_map.get(raw.get("protocol", 0), str(raw.get("protocol", "unknown")))
+    proto_num = most_common("ip_protocol")
+    ttls = [f["ip_ttl"] for f in frames if "ip_ttl" in f]
+    ids  = [f["ip_id"]  for f in frames if "ip_id"  in f]
+    layer3 = {
+        "srcIP":           most_common("ip_src"),
+        "dstIP":           most_common("ip_dst"),
+        "ipVersion":       most_common("ip_version"),
+        "protocol":        proto_map.get(proto_num, str(proto_num)),
+        "avgTTL":          round(statistics.mean(ttls), 2) if ttls else None,
+        "minTTL":          min(ttls) if ttls else None,
+        "maxTTL":          max(ttls) if ttls else None,
+        "ttlVariance":     round(statistics.variance(ttls), 4) if len(ttls) > 1 else 0,
+        "avgTotalLen":     avg("ip_tot_len"),
+        "dfSet":           sum(1 for f in frames if f.get("ip_df")),
+        "mfSet":           sum(1 for f in frames if f.get("ip_mf")),
+        "fragmented":      sum(1 for f in frames if f.get("ip_frag_off", 0) > 0),
+        "uniqueIPIDs":     len(set(ids)),
+        "avgDSCP":         avg("ip_dscp"),
+        "avgECN":          avg("ip_ecn"),
+    }
+
+    # ── Layer 4 (Transport — real from eBPF) ──
+    rtts = [f["rtt_ms"] for f in frames if f.get("rtt_ms") is not None]
+    windows = [f["tcp_window"] for f in frames if "tcp_window" in f]
+    layer4 = {
+        "protocol":        "TCP",
+        "dstPort":         most_common("tcp_dport"),
+        "srcPort":         most_common("tcp_sport"),
+        "synAckCount":     count_flag("SYN") + count_flag("ACK") - count_flag("RST"),
+        "rstCount":        count_flag("RST"),
+        "finCount":        count_flag("FIN"),
+        "flagCounts": {
+            "SYN": count_flag("SYN"),
+            "ACK": count_flag("ACK"),
+            "RST": count_flag("RST"),
+            "FIN": count_flag("FIN"),
+            "PSH": count_flag("PSH"),
+            "URG": count_flag("URG"),
+        },
+        "avgRTT_ms":       round(statistics.mean(rtts), 3) if rtts else None,
+        "minRTT_ms":       round(min(rtts), 3) if rtts else None,
+        "maxRTT_ms":       round(max(rtts), 3) if rtts else None,
+        "rttJitter_ms":    round(statistics.stdev(rtts), 3) if len(rtts) > 1 else 0,
+        "avgWindowSize":   round(statistics.mean(windows), 1) if windows else None,
+        "minWindowSize":   min(windows) if windows else None,
+        "maxWindowSize":   max(windows) if windows else None,
+        "totalPackets":    n,
+    }
+
+    # ── Layer 5/6 (Session/Presentation — derived) ──
+    src_ip = most_common("ip_src")
+    dst_ip = most_common("ip_dst")
+    bpf_ts = [f["bpf_ts_ns"] for f in frames if f.get("bpf_ts_ns")]
+    session_duration_ms = None
+    if len(bpf_ts) >= 2:
+        session_duration_ms = round((max(bpf_ts) - min(bpf_ts)) / 1e6, 3)
+
+    # infer TLS based on port
+    dst_port = most_common("tcp_dport")
+    tls_hint = "TLS (likely)" if dst_port in (443, 8443) else "plaintext (port 80)"
+
+    layer5_6 = {
+        "flowID":              f"{src_ip} ↔ {dst_ip}",
+        "sessionPackets":      n,
+        "sessionDuration_ms":  session_duration_ms,
+        "estimatedState":      "SYN_SENT → SYN_ACK received",
+        "encryptionHint":      tls_hint,
+        "compressionHint":     "none detected",
+        "firstSeqSeen":        frames[0].get("tcp_seq") if frames else None,
+        "lastSeqSeen":         frames[-1].get("tcp_seq") if frames else None,
+    }
+
+    # ── Layer 7 (Application — inferred from port) ──
+    port_app_map = {
+        80:   {"protocol": "HTTP",  "description": "Hypertext Transfer Protocol"},
+        443:  {"protocol": "HTTPS", "description": "HTTP over TLS"},
+        53:   {"protocol": "DNS",   "description": "Domain Name System"},
+        22:   {"protocol": "SSH",   "description": "Secure Shell"},
+        25:   {"protocol": "SMTP",  "description": "Simple Mail Transfer Protocol"},
+        8080: {"protocol": "HTTP",  "description": "HTTP alternate port"},
+    }
+    app_info = port_app_map.get(dst_port, {"protocol": "unknown", "description": f"port {dst_port}"})
+    layer7 = {
+        "inferredProtocol":  app_info["protocol"],
+        "description":       app_info["description"],
+        "destinationPort":   dst_port,
+        "note":              "Application layer data not decoded (raw TCP SYN probes)",
+    }
+
+    # ── Kernel Metadata (partial — from eBPF ktime) ──
+    bpf_ts_sorted = sorted(bpf_ts)
+    kernel_meta = {
+        "captureMethod":   "eBPF TC ingress classifier",
+        "ebpfProgram":     "tc_ingress / SCHED_CLS",
+        "firstCapture_ns": bpf_ts_sorted[0]  if bpf_ts_sorted else None,
+        "lastCapture_ns":  bpf_ts_sorted[-1] if bpf_ts_sorted else None,
+        "captureSpan_ms":  round((bpf_ts_sorted[-1] - bpf_ts_sorted[0]) / 1e6, 3) if len(bpf_ts_sorted) >= 2 else 0,
+        "packetsMatched":  n,
+        "pid":             "n/a (ingress — no socket ownership)",
+        "note":            "TC ingress; process attribution requires egress eBPF or kprobe",
+    }
+
+    # ── Payload (from IP total length vs headers) ──
+    payloads = []
+    for f in frames:
+        tot = f.get("ip_tot_len", 0)
+        ihl = f.get("ip_ihl", 20)
+        thl = f.get("tcp_header_len", 20)
+        pay = tot - ihl - thl
+        if pay >= 0:
+            payloads.append(pay)
+
+    payload = {
+        "avgPayloadBytes":  round(statistics.mean(payloads), 1) if payloads else 0,
+        "minPayloadBytes":  min(payloads) if payloads else 0,
+        "maxPayloadBytes":  max(payloads) if payloads else 0,
+        "totalPayloadBytes": sum(payloads),
+        "note":             "SYN-ACK replies carry no application payload",
+    }
 
     return {
-        "layer1": {
-            "interface":      "eth0",           # placeholder
-            "interfaceIndex": 2,                # placeholder
-            "linkSpeed":      "1Gbps",          # placeholder
-            "duplexMode":     "full",           # placeholder
-            "direction":      "ingress",        # placeholder
-            "timestamp":      "10:23:41.12341"  # placeholder
-        },
-        "layer2": {
-            "packetNum":    134,                   # placeholder
-            "packetLength": "74 bytes",            # placeholder
-            "srcMAC":       "00:1A:2B:3C:4D:5E",  # placeholder
-            "dstMAC":       "10:22:33:44:55:66",  # placeholder
-            "etherType":    "Ethernet II",         # placeholder
-            "frameType":    "unicast",             # placeholder
-            "vlanID":       100,                   # placeholder
-            "vlanPriority": 3,                     # placeholder
-            "dei":          0                      # placeholder
-        },
-        "layer3": {
-            "ipVersion":      raw.get("ipVersion",      None),  # real
-            "srcIP":          raw.get("srcIP",          None),  # real
-            "dstIP":          raw.get("dstIP",          None),  # real
-            "TTL":            raw.get("TTL",            None),  # real
-            "protocol":       proto_str,                        # real
-            "headerLength":   raw.get("headerLength",   None),  # real
-            "totalLength":    raw.get("totalLength",    None),  # real
-            "identification": raw.get("identification", None),  # real
-            "fragmentOffset": raw.get("fragmentOffset", None),  # real
-            "df":             raw.get("DF",             None),  # real
-            "mf":             raw.get("MF",             None),  # real
-            "checksum":       "0x0000",  # placeholder
-            "dscp":           0,         # placeholder
-            "ecn":            0          # placeholder
-        },
-        "layer4": {
-            "srcPort":         54321,     # placeholder
-            "dstPort":         443,       # placeholder
-            "protocol":        "TCP",     # placeholder
-            "seq":             1001,      # placeholder
-            "ack":             2001,      # placeholder
-            "flags":           "syn",     # placeholder
-            "windowSize":      64240,     # placeholder
-            "tcpHeaderLength": 32,        # placeholder
-            "checksum":        "0x4fa2",  # placeholder
-            "urgentPointer":   0,         # placeholder
-            "mss":             1460,      # placeholder
-            "windowScale":     7,         # placeholder
-            "sackPermitted":   True       # placeholder
-        },
-        "sessionPresentation": {
-            "flowID":             f"{raw.get('srcIP', '?')}:?-{dest_ip}:?",  # partial real
-            "sessionState":       "SYN_SENT",              # placeholder
-            "packetsInFlow":      5,                        # placeholder
-            "bytesInFlow":        740,                      # placeholder
-            "flowDuration":       "0.3s",                   # placeholder
-            "tlsVersion":         "TLS1.3",                 # placeholder
-            "cipherSuite":        "TLS_AES_128_GCM_SHA256", # placeholder
-            "compression":        "none",                   # placeholder
-            "certificateIssuer":  "Google Trust Services",  # placeholder
-            "certificateSubject": "google.com"              # placeholder
-        },
-        "layer7": {
-            "applicationProtocol": "HTTP",        # placeholder
-            "httpMethod":          "GET",          # placeholder
-            "httpHost":            "google.com",   # placeholder
-            "httpPath":            "/search",      # placeholder
-            "statusCode":          200,            # placeholder
-            "userAgent":           "Mozilla/5.0",  # placeholder
-            "contentType":         "text/html"     # placeholder
-        },
-        "kernelMetadata": {
-            "pid":              4321,               # placeholder
-            "processName":      "curl",             # placeholder
-            "uid":              1000,               # placeholder
-            "cgroupID":         "docker-abc123",    # placeholder
-            "containerID":      "container_78fa12", # placeholder
-            "networkNamespace": 4026531993          # placeholder
-        },
-        "payload": {
-            "payloadLength": 8,                          # placeholder
-            "hexDump":       "48 54 54 50 2F 31 2E 31"   # placeholder
+        "layer1":              layer1,
+        "layer2":              layer2,
+        "layer3":              layer3,
+        "layer4":              layer4,
+        "sessionPresentation": layer5_6,
+        "layer7":              layer7,
+        "kernelMetadata":      kernel_meta,
+        "payload":             payload,
+        "_meta": {
+            "totalFramesCaptured": n,
+            "captureTarget":       f"{dst_ip}:{dst_port}",
         }
     }
 
-
 # ── SocketIO events ────────────────────────────────────────────────────────────
-
 @socketio.on("connect")
 def on_connect():
     print("Frontend connected")
     emit("status", {"message": "Connected to launcher"})
 
-
 @socketio.on("start_capture")
 def on_start_capture(data):
     dest_ip  = data.get("destIp",  "1.1.1.1")
     dst_port = int(data.get("dstPort", 80))
+    count    = int(data.get("count", 10))
     sid      = request.sid
-
-    emit("status", {"message": f"Starting capture → {dest_ip}:{dst_port}"})
-
+    emit("status", {"message": f"Starting capture → {dest_ip}:{dst_port} x{count}"})
     thread = threading.Thread(
         target=_run_capture,
-        args=(dest_ip, dst_port, sid),
+        args=(dest_ip, dst_port, count, sid),
         daemon=True
     )
     thread.start()
 
+def _run_capture(dest_ip: str, dst_port: int, count: int, sid: str):
 
-def _run_capture(dest_ip: str, dst_port: int, sid: str):
-    raw         = {}
-    found_event = threading.Event()
+    PYTHON_BIN = os.path.join(os.path.dirname(__file__), "venv/bin/python")
 
     try:
         proc = subprocess.Popen(
-            ["sudo", "python3", "-u", EBPF_SCRIPT,
+            ["sudo", "-E", PYTHON_BIN , "-u", EBPF_SCRIPT,
              "--dest-ip", dest_ip,
-             "--dst-port", str(dst_port)],
+             "--dst-port", str(dst_port),
+             "--count",    str(count)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
     except Exception as e:
-        socketio.emit("error", {"message": f"Failed to start ebpf.py: {e}"})
+        socketio.emit("error", {"message": f"Failed to start ebpf.py: {e}"}, room=sid)
         return
 
-    def _reader():
-        in_incoming_block = False
-        block_lines       = []
+    summary_json = None
+    collecting_json = False
+    json_lines = []
 
-        print("[DEBUG] reader thread started, waiting for ebpf.py output...")
-        for line in proc.stdout:
-            print(f"[DEBUG] ebpf stdout: {line.rstrip()}")
-            if "← INCOMING" in line:
-                in_incoming_block = True
-                block_lines       = []
+    def _reader():
+        nonlocal summary_json, collecting_json, json_lines
+        for raw_line in proc.stdout:
+            line = raw_line.rstrip()
+            print(f"[ebpf stdout] {line}")
+
+            # Stream per-packet status to frontend
+            if line.startswith("[INGRESS eBPF]"):
+                parts = line.split()
+                probe = next((p.split("=")[1] for p in parts if p.startswith("probe=")), "?")
+                socketio.emit("status", {"message": f"Captured reply {probe}/{count}"}, room=sid)
+                socketio.sleep(0)
+
+            # Collect the JSON summary block
+            if line.strip() == "[SUMMARY_JSON]":
+                collecting_json = True
+                json_lines = []
                 continue
-            if "Captured packet" in line:
-                in_incoming_block = False
-                block_lines       = []
+            if line.strip() == "[/SUMMARY_JSON]":
+                collecting_json = False
+                raw_json = "\n".join(json_lines)
+                try:
+                    summary_json = json.loads(raw_json)
+                except Exception as e:
+                    print(f"[ERROR] JSON parse failed: {e}")
                 continue
-            if in_incoming_block:
-                block_lines.append(line)
-                if "MF:" in line:   # last field — block complete
-                    parsed = _parse_packet_lines(block_lines)
-                    print(f"[DEBUG] parsed block: {parsed}")
-                    raw.update(parsed)
-                    found_event.set()
-                    return
+            if collecting_json:
+                json_lines.append(line)
+                continue
+
+            if line == "[DONE]":
+                break
 
     def _stderr_reader():
         for line in proc.stderr:
             line = line.strip()
             if line:
-                print(f"[ebpf.py stderr]: {line}")
+                print(f"[ebpf stderr] {line}")
                 socketio.emit("status", {"message": f"[ebpf] {line}"}, room=sid)
+                socketio.sleep(0)
 
     reader = threading.Thread(target=_reader, daemon=True)
+    stderr_r = threading.Thread(target=_stderr_reader, daemon=True)
     reader.start()
-    stderr_reader = threading.Thread(target=_stderr_reader, daemon=True)
-    stderr_reader.start()
-
-    got_it = found_event.wait(timeout=15)
+    stderr_r.start()
+    reader.join(timeout=20)
 
     try:
         proc.terminate()
@@ -225,26 +304,19 @@ def _run_capture(dest_ip: str, dst_port: int, sid: str):
     except Exception:
         proc.kill()
 
-    if got_it:
-        packet = _build_packet(dest_ip, raw)
-        socketio.emit("packet_data", packet, room=sid)
-        socketio.emit("status", {"message": "Capture complete"}, room=sid)
-        socketio.sleep(0)
+    if summary_json:
+        aggregated = _aggregate(summary_json)
+        socketio.emit("packet_data", aggregated, room=sid)
+        socketio.emit("status", {"message": f"Capture complete — {len(summary_json)} packets"}, room=sid)
     else:
-        socketio.emit("error", {"message": "Timed out — no reply received"}, room=sid)
-        socketio.sleep(0)
+        socketio.emit("error", {"message": "No packets captured / timed out"}, room=sid)
+    socketio.sleep(0)
 
-
-# ── HTTP routes ────────────────────────────────────────────────────────────────
-
+# ── HTTP ───────────────────────────────────────────────────────────────────────
 @app.route("/")
 def home():
     return "eBPF launcher running. Connect via SocketIO."
 
-
-# ── Entry point ────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     print("Starting eBPF launcher on http://localhost:4242")
-    print("Run with: sudo python3 launcher.py")
     socketio.run(app, host="0.0.0.0", port=4242, debug=False)
