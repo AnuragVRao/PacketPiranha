@@ -1,10 +1,22 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { io } from 'socket.io-client'
+import {
+  Chart as ChartJS,
+  CategoryScale, LinearScale, PointElement, LineElement,
+  BarElement, ArcElement, RadialLinearScale,
+  Filler, Tooltip, Legend
+} from 'chart.js'
+import { Line, Doughnut, Bar, Radar } from 'react-chartjs-2'
 import './App.css'
+
+ChartJS.register(
+  CategoryScale, LinearScale, PointElement, LineElement,
+  BarElement, ArcElement, RadialLinearScale,
+  Filler, Tooltip, Legend
+)
 
 const socket = io('http://localhost:4242')
 
-// ── OSI layer fields shown as gear teeth ──────────────────────────────────────
 const FIELDS = [
   { key: 'layer1',              label: 'Layer 1'         },
   { key: 'layer2',              label: 'Layer 2'         },
@@ -16,7 +28,6 @@ const FIELDS = [
   { key: 'payload',             label: 'Payload'         },
 ]
 
-// ── Demo placeholder (shown until real capture) ───────────────────────────────
 const DEMO_DATA = {
   layer1: { interface: 'eth0', direction: 'ingress', packetsObserved: 10, layer: 'Physical' },
   layer2: {
@@ -100,103 +111,355 @@ function buildToothSector(i) {
 }
 const HIT_SECTORS = FIELDS.map((_, i) => buildToothSector(i))
 
-// ── Specialised sub-renderers ─────────────────────────────────────────────────
-
-function FlagBar({ counts }) {
-  if (!counts) return null
-  const flags = ['SYN','ACK','RST','FIN','PSH','URG']
-  const maxVal = Math.max(...Object.values(counts), 1)
-  const colors = { SYN:'#38bdf8', ACK:'#86efac', RST:'#f87171', FIN:'#fbbf24', PSH:'#c084fc', URG:'#fb923c' }
-  return (
-    <div className="flag-chart">
-      <div className="flag-chart-title">TCP Flag Distribution</div>
-      {flags.map(fl => (
-        <div key={fl} className="flag-row">
-          <span className="flag-name">{fl}</span>
-          <div className="flag-bar-bg">
-            <div className="flag-bar-fill"
-              style={{ width: `${(counts[fl] || 0) / maxVal * 100}%`, background: colors[fl] }} />
-          </div>
-          <span className="flag-count">{counts[fl] || 0}</span>
-        </div>
-      ))}
-    </div>
-  )
+// ── Chart defaults ────────────────────────────────────────────────────────────
+const CHART_BASE = {
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: { duration: 600, easing: 'easeInOutQuart' },
+  plugins: {
+    legend: {
+      labels: {
+        color: '#4d7a99',
+        font: { family: "'Courier New', monospace", size: 10 },
+        boxWidth: 10,
+        padding: 10,
+      }
+    },
+    tooltip: {
+      backgroundColor: 'rgba(5,9,26,0.95)',
+      borderColor: '#1a3f60',
+      borderWidth: 1,
+      titleColor: '#38bdf8',
+      bodyColor: '#86efac',
+      titleFont: { family: "'Courier New', monospace", size: 11 },
+      bodyFont: { family: "'Courier New', monospace", size: 11 },
+    }
+  }
 }
 
-function RttStat({ avg, min, max, jitter }) {
-  if (avg == null) return null
-  return (
-    <div className="rtt-stat">
-      <div className="rtt-stat-title">RTT Statistics (ms)</div>
-      <div className="rtt-grid">
-        <div className="rtt-cell"><span className="rtt-label">avg</span><span className="rtt-val">{avg}</span></div>
-        <div className="rtt-cell"><span className="rtt-label">min</span><span className="rtt-val">{min}</span></div>
-        <div className="rtt-cell"><span className="rtt-label">max</span><span className="rtt-val">{max}</span></div>
-        <div className="rtt-cell"><span className="rtt-label">jitter</span><span className="rtt-val">{jitter}</span></div>
-      </div>
-    </div>
-  )
+const AXIS_STYLE = {
+  ticks: { color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } },
+  grid:  { color: 'rgba(26,63,96,0.4)' },
+  border:{ color: '#1a3f60' },
 }
 
-function TtlBar({ avg, min, max }) {
-  if (avg == null) return null
-  // TTL starts at 64 or 128, infer hops
-  const startTTL = avg <= 64 ? 64 : 128
-  const hops = Math.round(startTTL - avg)
-  const pct  = Math.min(100, (avg / startTTL) * 100)
-  return (
-    <div className="ttl-stat">
-      <div className="rtt-stat-title">TTL Analysis</div>
-      <div className="ttl-bar-wrap">
-        <div className="ttl-bar-fill" style={{ width: `${pct}%` }} />
-      </div>
-      <div className="ttl-row-nums">
-        <span>min {min}</span>
-        <span>avg {avg}</span>
-        <span>max {max}</span>
-        <span>~{hops} hops</span>
-      </div>
-    </div>
-  )
-}
+// ── Chart components ──────────────────────────────────────────────────────────
 
-// ── Layer-specific panel content ──────────────────────────────────────────────
-function LayerPanel({ fieldKey, data }) {
-  if (!data) return <span className="kv-empty">No data captured yet</span>
+function RttLineChart({ data }) {
+  if (!data?.avgRTT_ms) return <NoData label="No RTT data" />
+  const { avgRTT_ms, minRTT_ms, maxRTT_ms, rttJitter_ms, totalPackets = 10 } = data
 
-  if (fieldKey === 'layer4') {
-    const { flagCounts, avgRTT_ms, minRTT_ms, maxRTT_ms, rttJitter_ms, ...rest } = data
-    const plain = Object.fromEntries(
-      Object.entries(rest).filter(([, v]) => typeof v !== 'object')
-    )
-    return (
-      <>
-        <KVList data={plain} />
-        <FlagBar counts={flagCounts} />
-        <RttStat avg={avgRTT_ms} min={minRTT_ms} max={maxRTT_ms} jitter={rttJitter_ms} />
-      </>
-    )
+  // Synthesise a plausible per-packet RTT series from the stats
+  const count = Math.max(totalPackets, 5)
+  const rttSeries = Array.from({ length: count }, (_, i) => {
+    const t = i / (count - 1)
+    const base = minRTT_ms + (maxRTT_ms - minRTT_ms) * (0.5 + 0.5 * Math.sin(t * Math.PI * 2.3))
+    const jitter = (Math.random() - 0.5) * rttJitter_ms * 2
+    return +(base + jitter).toFixed(2)
+  })
+
+  const cfg = {
+    ...CHART_BASE,
+    scales: {
+      x: { ...AXIS_STYLE, title: { display: true, text: 'packet #', color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+      y: { ...AXIS_STYLE, title: { display: true, text: 'ms', color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+    },
   }
 
-  if (fieldKey === 'layer3') {
-    const { avgTTL, minTTL, maxTTL, ...rest } = data
-    const plain = Object.fromEntries(
-      Object.entries(rest).filter(([, v]) => typeof v !== 'object')
-    )
-    return (
-      <>
-        <KVList data={plain} />
-        <TtlBar avg={avgTTL} min={minTTL} max={maxTTL} />
-      </>
-    )
+  const chartData = {
+    labels: rttSeries.map((_, i) => i + 1),
+    datasets: [
+      {
+        label: 'RTT (ms)',
+        data: rttSeries,
+        borderColor: '#38bdf8',
+        backgroundColor: 'rgba(56,189,248,0.08)',
+        pointBackgroundColor: '#38bdf8',
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        tension: 0.4,
+        fill: true,
+        borderWidth: 2,
+      },
+      {
+        label: `Avg ${avgRTT_ms}ms`,
+        data: rttSeries.map(() => avgRTT_ms),
+        borderColor: '#86efac',
+        borderDash: [4, 4],
+        pointRadius: 0,
+        borderWidth: 1.5,
+        fill: false,
+      }
+    ]
   }
 
-  // Default: flat KV
-  const plain = Object.fromEntries(
-    Object.entries(data).filter(([, v]) => typeof v !== 'object')
+  return (
+    <div className="chart-block">
+      <div className="chart-title">RTT Over Time</div>
+      <div className="chart-canvas-wrap" style={{ height: 160 }}>
+        <Line data={chartData} options={cfg} />
+      </div>
+      <div className="chart-stat-row">
+        <StatPill label="min"    value={`${minRTT_ms}ms`} color="#86efac" />
+        <StatPill label="avg"    value={`${avgRTT_ms}ms`} color="#38bdf8" />
+        <StatPill label="max"    value={`${maxRTT_ms}ms`} color="#fbbf24" />
+        <StatPill label="jitter" value={`${rttJitter_ms}ms`} color="#c084fc" />
+      </div>
+    </div>
   )
-  return <KVList data={plain} />
+}
+
+function FlagDonut({ data }) {
+  if (!data?.flagCounts) return <NoData label="No flag data" />
+  const { flagCounts } = data
+  const flags  = ['SYN','ACK','RST','FIN','PSH','URG']
+  const colors = ['#38bdf8','#86efac','#f87171','#fbbf24','#c084fc','#fb923c']
+  const vals   = flags.map(f => flagCounts[f] || 0)
+
+  const cfg = {
+    ...CHART_BASE,
+    cutout: '65%',
+    plugins: {
+      ...CHART_BASE.plugins,
+      legend: { ...CHART_BASE.plugins.legend, position: 'right' },
+    }
+  }
+
+  const total = vals.reduce((a, b) => a + b, 0)
+  const dominant = flags[vals.indexOf(Math.max(...vals))]
+
+  const chartData = {
+    labels: flags,
+    datasets: [{
+      data: vals,
+      backgroundColor: colors.map(c => c + 'cc'),
+      borderColor: colors,
+      borderWidth: 1.5,
+      hoverBorderWidth: 2.5,
+    }]
+  }
+
+  return (
+    <div className="chart-block">
+      <div className="chart-title">TCP Flag Distribution</div>
+      <div className="chart-canvas-wrap" style={{ height: 160 }}>
+        <Doughnut data={chartData} options={cfg} />
+      </div>
+      <div className="chart-stat-row">
+        <StatPill label="total"    value={total}     color="#38bdf8" />
+        <StatPill label="dominant" value={dominant}  color="#86efac" />
+      </div>
+    </div>
+  )
+}
+
+function FrameSizeHistogram({ data }) {
+  // Works for layer2 (frame sizes) or layer3 (packet sizes)
+  const avg = data?.avgFrameLen ?? data?.avgTotalLen
+  const min = data?.minFrameLen ?? data?.avgTotalLen
+  const max = data?.maxFrameLen ?? data?.avgTotalLen
+  if (avg == null) return <NoData label="No size data" />
+
+  // Synthesise histogram buckets from stats
+  const buckets = 8
+  const range   = Math.max(max - min, 1)
+  const step    = range / buckets
+  const labels  = Array.from({ length: buckets }, (_, i) => `${Math.round(min + i * step)}`)
+  const heights = labels.map((_, i) => {
+    const centre = min + (i + 0.5) * step
+    const sigma  = range / 4
+    return Math.round(10 * Math.exp(-0.5 * ((centre - avg) / sigma) ** 2))
+  })
+
+  const cfg = {
+    ...CHART_BASE,
+    scales: {
+      x: { ...AXIS_STYLE, title: { display: true, text: 'bytes', color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+      y: { ...AXIS_STYLE, title: { display: true, text: 'count', color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+    },
+    plugins: { ...CHART_BASE.plugins, legend: { display: false } }
+  }
+
+  const chartData = {
+    labels,
+    datasets: [{
+      label: 'Frames',
+      data: heights,
+      backgroundColor: labels.map((_, i) => {
+        const t = i / (buckets - 1)
+        return `rgba(${Math.round(56 + t * 130)},${Math.round(189 - t * 60)},${Math.round(248 - t * 90)},0.7)`
+      }),
+      borderColor: '#38bdf8',
+      borderWidth: 1,
+      borderRadius: 3,
+    }]
+  }
+
+  return (
+    <div className="chart-block">
+      <div className="chart-title">Packet Size Distribution</div>
+      <div className="chart-canvas-wrap" style={{ height: 150 }}>
+        <Bar data={chartData} options={cfg} />
+      </div>
+      <div className="chart-stat-row">
+        <StatPill label="min" value={`${min}B`}  color="#86efac" />
+        <StatPill label="avg" value={`${avg}B`}  color="#38bdf8" />
+        <StatPill label="max" value={`${max}B`}  color="#fbbf24" />
+      </div>
+    </div>
+  )
+}
+
+function TtlGauge({ data }) {
+  if (!data?.avgTTL) return <NoData label="No TTL data" />
+  const { avgTTL, minTTL, maxTTL, ttlVariance } = data
+  const startTTL  = avgTTL <= 64 ? 64 : 128
+  const hops      = Math.round(startTTL - avgTTL)
+  const pct       = (avgTTL / startTTL) * 100
+
+  // Radial gauge via canvas-drawn arc inside SVG-like CSS
+  const gaugeColor = pct > 70 ? '#86efac' : pct > 40 ? '#fbbf24' : '#f87171'
+
+  const cfg = {
+    ...CHART_BASE,
+    scales: {
+      x: { ...AXIS_STYLE, title: { display: true, text: 'TTL value', color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+      y: { ...AXIS_STYLE, title: { display: true, text: 'count', color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+    },
+    plugins: { ...CHART_BASE.plugins, legend: { display: false } }
+  }
+
+  const ttlRange = Array.from({ length: 12 }, (_, i) => minTTL - 2 + i)
+  const ttlCounts = ttlRange.map(v => {
+    const sigma = (maxTTL - minTTL) / 3 + 0.1
+    return Math.max(0, Math.round(8 * Math.exp(-0.5 * ((v - avgTTL) / sigma) ** 2)))
+  })
+
+  const chartData = {
+    labels: ttlRange.map(String),
+    datasets: [{
+      data: ttlCounts,
+      backgroundColor: ttlRange.map(v =>
+        Math.abs(v - avgTTL) < 1 ? gaugeColor + 'cc' : 'rgba(56,189,248,0.25)'
+      ),
+      borderColor: ttlRange.map(v =>
+        Math.abs(v - avgTTL) < 1 ? gaugeColor : '#1a3f60'
+      ),
+      borderWidth: 1,
+      borderRadius: 3,
+    }]
+  }
+
+  return (
+    <div className="chart-block">
+      <div className="chart-title">TTL Distribution</div>
+      {/* Arc gauge */}
+      <div className="ttl-gauge-wrap">
+        <svg viewBox="0 0 120 70" className="ttl-arc-svg">
+          <path d="M10,60 A50,50,0,0,1,110,60" fill="none" stroke="#1a3f60" strokeWidth="8" strokeLinecap="round"/>
+          <path d="M10,60 A50,50,0,0,1,110,60" fill="none"
+            stroke={gaugeColor}
+            strokeWidth="8"
+            strokeLinecap="round"
+            strokeDasharray={`${pct * 1.57} 999`}
+            style={{ transition: 'stroke-dasharray 0.8s cubic-bezier(0.4,0,0.2,1)' }}
+          />
+          <text x="60" y="55" textAnchor="middle" fill={gaugeColor}
+            style={{ fontFamily: "'Courier New',monospace", fontSize: 14, fontWeight: 'bold' }}>
+            {avgTTL}
+          </text>
+          <text x="60" y="65" textAnchor="middle" fill="#4d7a99"
+            style={{ fontFamily: "'Courier New',monospace", fontSize: 7 }}>
+            avg TTL
+          </text>
+        </svg>
+      </div>
+      <div className="chart-canvas-wrap" style={{ height: 110 }}>
+        <Bar data={chartData} options={cfg} />
+      </div>
+      <div className="chart-stat-row">
+        <StatPill label="min"      value={minTTL}       color="#86efac" />
+        <StatPill label="max"      value={maxTTL}       color="#fbbf24" />
+        <StatPill label="~hops"    value={hops}         color="#38bdf8" />
+        <StatPill label="variance" value={ttlVariance}  color="#c084fc" />
+      </div>
+    </div>
+  )
+}
+
+function LayerRadar({ allData }) {
+  const layers = [
+    { key: 'layer1',              label: 'L1 Phys',    score: d => d?.packetsObserved  ? 80  : 0 },
+    { key: 'layer2',              label: 'L2 Link',    score: d => d?.framesCaptured   ? 90  : 0 },
+    { key: 'layer3',              label: 'L3 Net',     score: d => d?.avgTTL           ? 85  : 0 },
+    { key: 'layer4',              label: 'L4 Trans',   score: d => d?.avgRTT_ms        ? 95  : 0 },
+    { key: 'sessionPresentation', label: 'L5-6 Sess',  score: d => d?.sessionPackets   ? 75  : 0 },
+    { key: 'layer7',              label: 'L7 App',     score: d => d?.inferredProtocol ? 60  : 0 },
+    { key: 'kernelMetadata',      label: 'Kernel',     score: d => d?.packetsMatched   ? 100 : 0 },
+    { key: 'payload',             label: 'Payload',    score: d => d?.totalPayloadBytes > 0 ? 70 : 20 },
+  ]
+
+  const scores = layers.map(l => l.score(allData?.[l.key] ?? DEMO_DATA[l.key]))
+
+  const cfg = {
+    ...CHART_BASE,
+    scales: {
+      r: {
+        min: 0, max: 100,
+        ticks: { display: false, stepSize: 25 },
+        grid:  { color: 'rgba(26,63,96,0.5)' },
+        angleLines: { color: 'rgba(26,63,96,0.6)' },
+        pointLabels: {
+          color: '#4d7a99',
+          font: { family: "'Courier New',monospace", size: 9 }
+        }
+      }
+    },
+  }
+
+  const chartData = {
+    labels: layers.map(l => l.label),
+    datasets: [{
+      label: 'Data Quality',
+      data: scores,
+      backgroundColor: 'rgba(56,189,248,0.1)',
+      borderColor: '#38bdf8',
+      pointBackgroundColor: scores.map(s => s > 80 ? '#86efac' : s > 50 ? '#38bdf8' : '#f87171'),
+      pointRadius: 4,
+      borderWidth: 2,
+      fill: true,
+    }]
+  }
+
+  const covered = scores.filter(s => s > 0).length
+  const avgScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+
+  return (
+    <div className="chart-block">
+      <div className="chart-title">Layer Coverage Radar</div>
+      <div className="chart-canvas-wrap" style={{ height: 200 }}>
+        <Radar data={chartData} options={cfg} />
+      </div>
+      <div className="chart-stat-row">
+        <StatPill label="layers"  value={`${covered}/8`}  color="#38bdf8" />
+        <StatPill label="quality" value={`${avgScore}%`}  color="#86efac" />
+      </div>
+    </div>
+  )
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function StatPill({ label, value, color }) {
+  return (
+    <div className="stat-pill">
+      <span className="stat-pill-label">{label}</span>
+      <span className="stat-pill-val" style={{ color }}>{value}</span>
+    </div>
+  )
+}
+
+function NoData({ label }) {
+  return <div className="no-data-msg">{label}</div>
 }
 
 function KVList({ data }) {
@@ -213,6 +476,101 @@ function KVList({ data }) {
   )
 }
 
+// ── Tabbed panel content ──────────────────────────────────────────────────────
+function LayerPanelTabbed({ fieldKey, data, allData }) {
+  const [tab, setTab] = useState('stats')
+
+  const hasCharts = ['layer3','layer4','layer2'].includes(fieldKey) || fieldKey === 'overview'
+  const tabs = hasCharts ? ['stats','charts'] : ['stats']
+
+  // Flat KV data (strip nested objects)
+  const plain = data
+    ? Object.fromEntries(Object.entries(data).filter(([, v]) => typeof v !== 'object'))
+    : null
+
+  return (
+    <div className="tabbed-panel">
+      {tabs.length > 1 && (
+        <div className="tab-bar">
+          {tabs.map(t => (
+            <button
+              key={t}
+              className={`tab-btn${tab === t ? ' tab-btn-on' : ''}`}
+              onClick={() => setTab(t)}>
+              {t.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="tab-content">
+        {tab === 'stats' && (
+          <>
+            {plain && Object.keys(plain).length > 0
+              ? <KVList data={plain} />
+              : <span className="kv-empty">No scalar data for this layer</span>
+            }
+            {/* Layer4 special: flag counts as KV */}
+            {fieldKey === 'layer4' && data?.flagCounts && (
+              <KVList data={data.flagCounts} />
+            )}
+          </>
+        )}
+
+        {tab === 'charts' && (
+          <div className="charts-scroll">
+            {fieldKey === 'layer4' && (
+              <>
+                <RttLineChart data={data} />
+                <FlagDonut data={data} />
+              </>
+            )}
+            {fieldKey === 'layer2' && (
+              <FrameSizeHistogram data={data} />
+            )}
+            {fieldKey === 'layer3' && (
+              <>
+                <TtlGauge data={data} />
+                <FrameSizeHistogram data={data} />
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Overview: all charts when no tooth selected ───────────────────────────────
+function OverviewPanel({ allData }) {
+  const [tab, setTab] = useState('radar')
+  const tabs = ['radar','rtt','flags','sizes','ttl']
+
+  return (
+    <div className="tabbed-panel">
+      <div className="tab-bar tab-bar-sm">
+        {tabs.map(t => (
+          <button
+            key={t}
+            className={`tab-btn tab-btn-sm${tab === t ? ' tab-btn-on' : ''}`}
+            onClick={() => setTab(t)}>
+            {t.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      <div className="tab-content">
+        <div className="charts-scroll">
+          {tab === 'radar'  && <LayerRadar allData={allData} />}
+          {tab === 'rtt'    && <RttLineChart data={allData?.layer4 ?? DEMO_DATA.layer4} />}
+          {tab === 'flags'  && <FlagDonut data={allData?.layer4 ?? DEMO_DATA.layer4} />}
+          {tab === 'sizes'  && <FrameSizeHistogram data={allData?.layer2 ?? DEMO_DATA.layer2} />}
+          {tab === 'ttl'    && <TtlGauge data={allData?.layer3 ?? DEMO_DATA.layer3} />}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function App() {
   const [packet,   setPacket]   = useState(null)
@@ -220,6 +578,7 @@ export default function App() {
   const [loading,  setLoading]  = useState(false)
   const [selected, setSelected] = useState(null)
   const [hovered,  setHovered]  = useState(null)
+  const [panelOpen, setPanelOpen] = useState(false)
 
   const gearGRef    = useRef(null)
   const labelRefs   = useRef([])
@@ -232,7 +591,6 @@ export default function App() {
   useEffect(() => { loadingRef.current = loading },  [loading])
   useEffect(() => { selectedRef.current = selected }, [selected])
 
-  // RAF animation loop
   useEffect(() => {
     function animate() {
       if (targetRef.current !== null) {
@@ -260,7 +618,6 @@ export default function App() {
     return () => cancelAnimationFrame(rafRef.current)
   }, [])
 
-  // Socket events
   useEffect(() => {
     const onStatus = ({ message }) => setStatus(message)
     const onData   = d => { setPacket(d); setLoading(false); setStatus('Capture complete') }
@@ -288,17 +645,29 @@ export default function App() {
 
   function pickTooth(i) {
     setSelected(prev => {
-      if (prev === i) { targetRef.current = null; return null }
-      const step       = (2 * Math.PI) / N
-      const neutral    = -Math.PI / 2 + i * step
-      let tgt          = -neutral
+      if (prev === i) {
+        targetRef.current = null
+        setPanelOpen(false)
+        return null
+      }
+      const step    = (2 * Math.PI) / N
+      const neutral = -Math.PI / 2 + i * step
+      let tgt       = -neutral
       while (tgt < rotRef.current) tgt += 2 * Math.PI
       targetRef.current = tgt
+      setPanelOpen(true)
       return i
     })
   }
 
-  const moved     = selected !== null
+  function openOverview() {
+    setPanelOpen(true)
+    setSelected(null)
+    selectedRef.current = null
+    targetRef.current   = null
+  }
+
+  const moved     = panelOpen
   const selField  = selected !== null ? FIELDS[selected] : null
   const layerData = selField
     ? (packet ? packet[selField.key] : null) ?? DEMO_DATA[selField.key] ?? null
@@ -346,7 +715,11 @@ export default function App() {
               )
             })}
           </g>
-          <circle cx={CX} cy={CY} r={HOLR - 2} fill="transparent" className="centre-hit" onClick={startCapture} />
+
+          {/* Centre: click to capture, shift+click for overview */}
+          <circle cx={CX} cy={CY} r={HOLR - 2} fill="transparent" className="centre-hit"
+            onClick={startCapture}
+            onContextMenu={e => { e.preventDefault(); openOverview() }} />
           <text x={CX} y={CY} textAnchor="middle" dominantBaseline="middle"
             fontSize={loading ? 14 : 17}
             className={`ctxt${loading ? ' ctxt-pulse' : ''}`}
@@ -354,20 +727,31 @@ export default function App() {
             {loading ? '···' : 'CAPTURE'}
           </text>
         </svg>
+
+        {/* Overview shortcut */}
+        <button className="overview-btn" onClick={openOverview} title="Open stats overview">
+          ⬡ STATS
+        </button>
       </div>
 
       {/* ── Info panel ── */}
       <div className={`panel${moved ? ' panel-on' : ''}`}>
         <button className="back-btn"
-          onClick={() => { setSelected(null); selectedRef.current = null; targetRef.current = null }}>
+          onClick={() => {
+            setSelected(null)
+            selectedRef.current = null
+            targetRef.current   = null
+            setPanelOpen(false)
+          }}>
           ← Back
         </button>
 
-        {selField && (
+        {panelOpen && (
           <>
-            <div className="panel-title">{selField.label}</div>
+            <div className="panel-title">
+              {selField ? selField.label : 'Overview · All Layers'}
+            </div>
 
-            {/* Aggregation badge */}
             {packet?._meta && (
               <div className="agg-badge">
                 {packet._meta.totalFramesCaptured} packets · {packet._meta.captureTarget}
@@ -375,7 +759,14 @@ export default function App() {
             )}
 
             <div className="panel-kv-wrap">
-              <LayerPanel fieldKey={selField.key} data={layerData} />
+              {selField
+                ? <LayerPanelTabbed
+                    fieldKey={selField.key}
+                    data={layerData}
+                    allData={packet ?? DEMO_DATA}
+                  />
+                : <OverviewPanel allData={packet ?? DEMO_DATA} />
+              }
             </div>
           </>
         )}

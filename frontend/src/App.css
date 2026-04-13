@@ -17,8 +17,10 @@
 .gear-wrap {
   position: absolute;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 16px;
   transition: transform 0.7s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .gear-wrap.moved { transform: translateX(-250px); }
@@ -71,6 +73,25 @@
 }
 @keyframes pulse-txt { from { opacity: 0.5; } to { opacity: 1; } }
 .centre-hit { cursor: pointer; }
+
+/* ── Overview shortcut button ─────────────────────────────────────────────── */
+.overview-btn {
+  background: transparent;
+  border: 1px solid #1a3f60;
+  color: #4d7a99;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  border-radius: 3px;
+  letter-spacing: 2px;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+.overview-btn:hover {
+  border-color: #38bdf8;
+  color: #38bdf8;
+  background: rgba(56,189,248,0.05);
+}
 
 /* ── Info panel ───────────────────────────────────────────────────────────── */
 .panel {
@@ -134,8 +155,9 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
   padding-right: 2px;
+  min-height: 0;
 }
 .panel-kv-wrap::-webkit-scrollbar { width: 4px; }
 .panel-kv-wrap::-webkit-scrollbar-track { background: transparent; }
@@ -172,127 +194,6 @@
 }
 .kv-empty { color: #263d55; font-style: italic; font-family: 'Courier New', monospace; font-size: 11px; }
 
-/* ── Flag chart ───────────────────────────────────────────────────────────── */
-.flag-chart {
-  background: rgba(56, 189, 248, 0.04);
-  border: 1px solid #1a3f60;
-  border-radius: 6px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.flag-chart-title {
-  font-family: 'Courier New', monospace;
-  font-size: 10px;
-  letter-spacing: 2px;
-  color: #38bdf8;
-  opacity: 0.7;
-  text-transform: uppercase;
-  margin-bottom: 4px;
-}
-.flag-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.flag-name {
-  font-family: 'Courier New', monospace;
-  font-size: 10px;
-  color: #4d7a99;
-  width: 28px;
-  flex-shrink: 0;
-}
-.flag-bar-bg {
-  flex: 1;
-  height: 6px;
-  background: rgba(26, 63, 96, 0.5);
-  border-radius: 3px;
-  overflow: hidden;
-}
-.flag-bar-fill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-  min-width: 2px;
-}
-.flag-count {
-  font-family: 'Courier New', monospace;
-  font-size: 10px;
-  color: #86efac;
-  width: 20px;
-  text-align: right;
-  flex-shrink: 0;
-}
-
-/* ── RTT stat box ─────────────────────────────────────────────────────────── */
-.rtt-stat {
-  background: rgba(56, 189, 248, 0.04);
-  border: 1px solid #1a3f60;
-  border-radius: 6px;
-  padding: 12px 14px;
-}
-.rtt-stat-title {
-  font-family: 'Courier New', monospace;
-  font-size: 10px;
-  letter-spacing: 2px;
-  color: #38bdf8;
-  opacity: 0.7;
-  text-transform: uppercase;
-  margin-bottom: 10px;
-}
-.rtt-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.rtt-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.rtt-label {
-  font-family: 'Courier New', monospace;
-  font-size: 9px;
-  color: #4d7a99;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-.rtt-val {
-  font-family: 'Courier New', monospace;
-  font-size: 14px;
-  color: #86efac;
-  font-weight: bold;
-}
-
-/* ── TTL bar ──────────────────────────────────────────────────────────────── */
-.ttl-stat {
-  background: rgba(56, 189, 248, 0.04);
-  border: 1px solid #1a3f60;
-  border-radius: 6px;
-  padding: 12px 14px;
-}
-.ttl-bar-wrap {
-  height: 8px;
-  background: rgba(26, 63, 96, 0.5);
-  border-radius: 4px;
-  overflow: hidden;
-  margin: 10px 0 6px;
-}
-.ttl-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #f87171, #fbbf24, #86efac);
-  border-radius: 4px;
-  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.ttl-row-nums {
-  display: flex;
-  justify-content: space-between;
-  font-family: 'Courier New', monospace;
-  font-size: 10px;
-  color: #4d7a99;
-}
-
 /* ── Status line ──────────────────────────────────────────────────────────── */
 .panel-status {
   font-family: 'Courier New', monospace;
@@ -300,4 +201,145 @@
   color: #263d55;
   letter-spacing: 1px;
   flex-shrink: 0;
+}
+
+/* ── Tab system ───────────────────────────────────────────────────────────── */
+.tabbed-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+}
+
+.tab-bar {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.tab-bar-sm {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tab-btn {
+  background: transparent;
+  border: 1px solid #1a3f60;
+  color: #4d7a99;
+  padding: 5px 14px;
+  cursor: pointer;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 2px;
+  border-radius: 3px;
+  transition: all 0.18s;
+}
+.tab-btn:hover { border-color: #38bdf8; color: #38bdf8; }
+.tab-btn-on {
+  border-color: #38bdf8;
+  color: #38bdf8;
+  background: rgba(56,189,248,0.08);
+}
+
+.tab-btn-sm {
+  padding: 4px 9px;
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+
+.tab-content {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.tab-content::-webkit-scrollbar { width: 4px; }
+.tab-content::-webkit-scrollbar-track { background: transparent; }
+.tab-content::-webkit-scrollbar-thumb { background: #1a3f60; border-radius: 2px; }
+
+.charts-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── Chart blocks ─────────────────────────────────────────────────────────── */
+.chart-block {
+  background: rgba(56, 189, 248, 0.03);
+  border: 1px solid #1a3f60;
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chart-title {
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #38bdf8;
+  opacity: 0.75;
+  text-transform: uppercase;
+}
+
+.chart-canvas-wrap {
+  position: relative;
+  width: 100%;
+}
+
+/* ── Stat pills ───────────────────────────────────────────────────────────── */
+.chart-stat-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stat-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(26, 63, 96, 0.25);
+  border: 1px solid #1a3f60;
+  border-radius: 4px;
+  padding: 4px 10px;
+  min-width: 48px;
+}
+
+.stat-pill-label {
+  font-family: 'Courier New', monospace;
+  font-size: 8px;
+  color: #4d7a99;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.stat-pill-val {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: bold;
+}
+
+/* ── TTL arc gauge ────────────────────────────────────────────────────────── */
+.ttl-gauge-wrap {
+  display: flex;
+  justify-content: center;
+}
+
+.ttl-arc-svg {
+  width: 120px;
+  height: 70px;
+}
+
+/* ── No data placeholder ──────────────────────────────────────────────────── */
+.no-data-msg {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: #263d55;
+  font-style: italic;
+  padding: 20px 0;
+  text-align: center;
 }
