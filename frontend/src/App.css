@@ -21,10 +21,7 @@
   justify-content: center;
   transition: transform 0.7s cubic-bezier(0.4, 0, 0.2, 1);
 }
-
-.gear-wrap.moved {
-  transform: translateX(-250px);
-}
+.gear-wrap.moved { transform: translateX(-250px); }
 
 /* ── SVG canvas ───────────────────────────────────────────────────────────── */
 .gear-svg {
@@ -42,14 +39,11 @@
   stroke-linejoin: round;
   transition: fill 0.3s;
 }
-
 .gear-hole {
   fill: #05091a;
   stroke: #1a3f60;
   stroke-width: 1.5;
 }
-
-/* Tooth labels */
 .lbl {
   fill: #4d7a99;
   font-family: 'Courier New', monospace;
@@ -58,13 +52,8 @@
   transition: fill 0.18s;
   letter-spacing: 0.5px;
 }
+.lbl-on { fill: #38bdf8; font-weight: bold; }
 
-.lbl-on {
-  fill: #38bdf8;
-  font-weight: bold;
-}
-
-/* Centre text */
 .ctxt {
   fill: #d4eeff;
   font-family: 'Courier New', monospace;
@@ -74,20 +63,13 @@
   user-select: none;
   transition: fill 0.2s, letter-spacing 0.2s;
 }
-
-.ctxt:hover  { fill: #38bdf8; }
-
+.ctxt:hover { fill: #38bdf8; }
 .ctxt-pulse {
   fill: #38bdf8;
   letter-spacing: 10px;
   animation: pulse-txt 0.9s ease-in-out infinite alternate;
 }
-
-@keyframes pulse-txt {
-  from { opacity: 0.5; }
-  to   { opacity: 1;   }
-}
-
+@keyframes pulse-txt { from { opacity: 0.5; } to { opacity: 1; } }
 .centre-hit { cursor: pointer; }
 
 /* ── Info panel ───────────────────────────────────────────────────────────── */
@@ -99,19 +81,15 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
-  gap: 18px;
-  padding: 40px 28px 28px;
+  gap: 12px;
+  padding: 36px 24px 24px;
   background: linear-gradient(150deg, rgba(5,9,26,0.97) 0%, rgba(8,18,46,0.96) 100%);
   border-left: 1px solid #1a3a60;
   backdrop-filter: blur(10px);
   transition: right 0.7s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
 }
-
-.panel.panel-on {
-  right: 0;
-}
+.panel.panel-on { right: 0; }
 
 /* Back button */
 .back-btn {
@@ -126,13 +104,9 @@
   border-radius: 3px;
   transition: background 0.2s, color 0.2s;
 }
+.back-btn:hover { background: #38bdf8; color: #05091a; }
 
-.back-btn:hover {
-  background: #38bdf8;
-  color: #05091a;
-}
-
-/* Field name */
+/* Layer title */
 .panel-title {
   font-family: 'Courier New', monospace;
   font-size: 11px;
@@ -141,6 +115,31 @@
   text-transform: uppercase;
 }
 
+/* Aggregation badge */
+.agg-badge {
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  color: #86efac;
+  background: rgba(134, 239, 172, 0.08);
+  border: 1px solid rgba(134, 239, 172, 0.2);
+  border-radius: 3px;
+  padding: 4px 10px;
+  letter-spacing: 1px;
+  align-self: flex-start;
+}
+
+/* Scrollable content area */
+.panel-kv-wrap {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 2px;
+}
+.panel-kv-wrap::-webkit-scrollbar { width: 4px; }
+.panel-kv-wrap::-webkit-scrollbar-track { background: transparent; }
+.panel-kv-wrap::-webkit-scrollbar-thumb { background: #1a3f60; border-radius: 2px; }
 
 /* Key-value list */
 .panel-kv {
@@ -149,53 +148,156 @@
   background: rgba(56, 189, 248, 0.04);
   border: 1px solid #1a3f60;
   border-radius: 6px;
-  padding: 14px 16px;
-  overflow-y: auto;
-  flex: 1;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 0;
 }
-
 .kv-row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  padding: 6px 0;
+  padding: 5px 0;
   border-bottom: 1px solid rgba(26, 63, 96, 0.5);
 }
-
-.kv-row:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.kv-key {
-  color: #38bdf8;
-  flex-shrink: 0;
-  max-width: 50%;
-  opacity: 0.85;
-}
-
+.kv-row:last-child { border-bottom: none; padding-bottom: 0; }
+.kv-key { color: #38bdf8; flex-shrink: 0; max-width: 52%; opacity: 0.85; }
 .kv-val {
   color: #86efac;
   text-align: right;
   overflow-wrap: break-word;
   word-break: break-word;
-  max-width: 50%;
+  max-width: 48%;
+}
+.kv-empty { color: #263d55; font-style: italic; font-family: 'Courier New', monospace; font-size: 11px; }
+
+/* ── Flag chart ───────────────────────────────────────────────────────────── */
+.flag-chart {
+  background: rgba(56, 189, 248, 0.04);
+  border: 1px solid #1a3f60;
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.flag-chart-title {
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #38bdf8;
+  opacity: 0.7;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.flag-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.flag-name {
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  color: #4d7a99;
+  width: 28px;
+  flex-shrink: 0;
+}
+.flag-bar-bg {
+  flex: 1;
+  height: 6px;
+  background: rgba(26, 63, 96, 0.5);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.flag-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  min-width: 2px;
+}
+.flag-count {
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  color: #86efac;
+  width: 20px;
+  text-align: right;
+  flex-shrink: 0;
 }
 
-.kv-empty {
-  color: #263d55;
-  font-style: italic;
+/* ── RTT stat box ─────────────────────────────────────────────────────────── */
+.rtt-stat {
+  background: rgba(56, 189, 248, 0.04);
+  border: 1px solid #1a3f60;
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.rtt-stat-title {
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #38bdf8;
+  opacity: 0.7;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.rtt-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.rtt-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rtt-label {
+  font-family: 'Courier New', monospace;
+  font-size: 9px;
+  color: #4d7a99;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.rtt-val {
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  color: #86efac;
+  font-weight: bold;
 }
 
-/* Status line */
+/* ── TTL bar ──────────────────────────────────────────────────────────────── */
+.ttl-stat {
+  background: rgba(56, 189, 248, 0.04);
+  border: 1px solid #1a3f60;
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.ttl-bar-wrap {
+  height: 8px;
+  background: rgba(26, 63, 96, 0.5);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 10px 0 6px;
+}
+.ttl-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #f87171, #fbbf24, #86efac);
+  border-radius: 4px;
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ttl-row-nums {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  color: #4d7a99;
+}
+
+/* ── Status line ──────────────────────────────────────────────────────────── */
 .panel-status {
   font-family: 'Courier New', monospace;
   font-size: 11px;
   color: #263d55;
   letter-spacing: 1px;
+  flex-shrink: 0;
 }
-
