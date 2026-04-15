@@ -288,6 +288,14 @@ def handle_ingress(cpu, data, size):
         if idx in send_times:
             rtt_ms = round((recv_time - send_times[idx]) * 1000, 3)
 
+        # inter-packet delay: ns since the previous captured packet (arrival order)
+        prev_ts_ns = max((v["bpf_ts_ns"] for v in captured.values()), default=None)
+        inter_pkt_delay_us = (
+            round((f.ts_ns - prev_ts_ns) / 1_000, 2)
+            if prev_ts_ns is not None and f.ts_ns > prev_ts_ns
+            else None
+        )
+
         frame_dict = {
             # Layer 2
             "src_mac":    mac_str(f.src_mac),
@@ -321,8 +329,9 @@ def handle_ingress(cpu, data, size):
             "tcp_checksum":    f"0x{f.tcp_check:04x}",
             "tcp_urgent":      f.tcp_urg,
             # Timing
-            "bpf_ts_ns":       f.ts_ns,
-            "rtt_ms":          rtt_ms,
+            "bpf_ts_ns":           f.ts_ns,
+            "rtt_ms":              rtt_ms,
+            "inter_pkt_delay_us":  inter_pkt_delay_us,
         }
         captured[idx] = frame_dict
 

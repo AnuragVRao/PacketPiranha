@@ -96,8 +96,29 @@ def _aggregate(frames: list[dict]) -> dict:
     }
 
     # ── Layer 4 (Transport — real from eBPF) ──
-    rtts = [f["rtt_ms"] for f in frames if f.get("rtt_ms") is not None]
-    windows = [f["tcp_window"] for f in frames if "tcp_window" in f]
+    # Sort frames by probe_idx so per-packet series are in send order
+    ordered = sorted(frames, key=lambda f: f.get("probe_idx", 0) if "probe_idx" in f
+                     else frames.index(f))
+
+    rtts = [f["rtt_ms"] for f in ordered if f.get("rtt_ms") is not None]
+    windows = [f["tcp_window"] for f in ordered if "tcp_window" in f]
+
+    # Real per-packet RTT series (probe_idx → rtt_ms), None where no reply
+    rtt_series = [f.get("rtt_ms") for f in ordered]
+
+    # Inter-packet delays from BPF kernel timestamps (µs), arrival order
+    bpf_ts_ordered = sorted(
+        [f["bpf_ts_ns"] for f in frames if f.get("bpf_ts_ns")],
+    )
+    inter_delays_us = [
+        round((bpf_ts_ordered[i] - bpf_ts_ordered[i-1]) / 1_000, 2)
+        for i in range(1, len(bpf_ts_ordered))
+    ]
+
+    # TCP sequence number deltas between consecutive captured packets
+    seqs = [f["tcp_seq"] for f in ordered if "tcp_seq" in f]
+    seq_deltas = [seqs[i] - seqs[i-1] for i in range(1, len(seqs))]
+
     layer4 = {
         "protocol":        "TCP",
         "dstPort":         most_common("tcp_dport"),
@@ -117,6 +138,9 @@ def _aggregate(frames: list[dict]) -> dict:
         "minRTT_ms":       round(min(rtts), 3) if rtts else None,
         "maxRTT_ms":       round(max(rtts), 3) if rtts else None,
         "rttJitter_ms":    round(statistics.stdev(rtts), 3) if len(rtts) > 1 else 0,
+        "rttSeries":       rtt_series,           # real per-packet RTTs
+        "interPktDelays_us": inter_delays_us,    # inter-arrival times from BPF clock
+        "seqDeltas":       seq_deltas,           # TCP seq number deltas
         "avgWindowSize":   round(statistics.mean(windows), 1) if windows else None,
         "minWindowSize":   min(windows) if windows else None,
         "maxWindowSize":   max(windows) if windows else None,

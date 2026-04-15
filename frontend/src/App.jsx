@@ -149,14 +149,17 @@ function RttLineChart({ data }) {
   if (!data?.avgRTT_ms) return <NoData label="No RTT data" />
   const { avgRTT_ms, minRTT_ms, maxRTT_ms, rttJitter_ms, totalPackets = 10 } = data
 
-  // Synthesise a plausible per-packet RTT series from the stats
-  const count = Math.max(totalPackets, 5)
-  const rttSeries = Array.from({ length: count }, (_, i) => {
-    const t = i / (count - 1)
-    const base = minRTT_ms + (maxRTT_ms - minRTT_ms) * (0.5 + 0.5 * Math.sin(t * Math.PI * 2.3))
-    const jitter = (Math.random() - 0.5) * rttJitter_ms * 2
-    return +(base + jitter).toFixed(2)
-  })
+  // Use real per-packet RTT series if available, fall back to synthesised
+  const real = data.rttSeries?.filter(v => v != null)
+  const isSynthesised = !real || real.length < 2
+  const rttSeries = isSynthesised
+    ? Array.from({ length: Math.max(totalPackets, 5) }, (_, i) => {
+        const t = i / (Math.max(totalPackets, 5) - 1)
+        const base = minRTT_ms + (maxRTT_ms - minRTT_ms) * (0.5 + 0.5 * Math.sin(t * Math.PI * 2.3))
+        const jitter = (Math.random() - 0.5) * rttJitter_ms * 2
+        return +(base + jitter).toFixed(2)
+      })
+    : real
 
   const cfg = {
     ...CHART_BASE,
@@ -195,7 +198,17 @@ function RttLineChart({ data }) {
 
   return (
     <div className="chart-block">
-      <div className="chart-title">RTT Over Time</div>
+      <div className="chart-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        RTT Over Time
+        <span style={{
+          fontSize: 8, letterSpacing: 1, padding: '2px 6px', borderRadius: 3,
+          background: isSynthesised ? 'rgba(251,191,36,0.12)' : 'rgba(134,239,172,0.12)',
+          border: `1px solid ${isSynthesised ? '#fbbf24' : '#86efac'}`,
+          color: isSynthesised ? '#fbbf24' : '#86efac',
+        }}>
+          {isSynthesised ? 'SYNTHESISED' : 'LIVE'}
+        </span>
+      </div>
       <div className="chart-canvas-wrap" style={{ height: 160 }}>
         <Line data={chartData} options={cfg} />
       </div>
@@ -204,6 +217,72 @@ function RttLineChart({ data }) {
         <StatPill label="avg"    value={`${avgRTT_ms}ms`} color="#38bdf8" />
         <StatPill label="max"    value={`${maxRTT_ms}ms`} color="#fbbf24" />
         <StatPill label="jitter" value={`${rttJitter_ms}ms`} color="#c084fc" />
+      </div>
+    </div>
+  )
+}
+
+function InterPktDelayChart({ data }) {
+  const delays = data?.interPktDelays_us
+  if (!delays || delays.length < 1) return <NoData label="No inter-packet delay data" />
+
+  const avg = +(delays.reduce((a, b) => a + b, 0) / delays.length).toFixed(2)
+  const mn  = Math.min(...delays)
+  const mx  = Math.max(...delays)
+
+  const cfg = {
+    ...CHART_BASE,
+    scales: {
+      x: { ...AXIS_STYLE, title: { display: true, text: 'gap #', color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+      y: { ...AXIS_STYLE, title: { display: true, text: 'µs', color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+    },
+  }
+
+  const chartData = {
+    labels: delays.map((_, i) => i + 1),
+    datasets: [
+      {
+        label: 'Inter-pkt delay (µs)',
+        data: delays,
+        borderColor: '#c084fc',
+        backgroundColor: 'rgba(192,132,252,0.08)',
+        pointBackgroundColor: '#c084fc',
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        tension: 0.3,
+        fill: true,
+        borderWidth: 2,
+      },
+      {
+        label: `Avg ${avg}µs`,
+        data: delays.map(() => avg),
+        borderColor: '#fb923c',
+        borderDash: [4, 4],
+        pointRadius: 0,
+        borderWidth: 1.5,
+        fill: false,
+      }
+    ]
+  }
+
+  return (
+    <div className="chart-block">
+      <div className="chart-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        Inter-Packet Arrival Delay
+        <span style={{
+          fontSize: 8, letterSpacing: 1, padding: '2px 6px', borderRadius: 3,
+          background: 'rgba(134,239,172,0.12)',
+          border: '1px solid #86efac',
+          color: '#86efac',
+        }}>LIVE</span>
+      </div>
+      <div className="chart-canvas-wrap" style={{ height: 140 }}>
+        <Line data={chartData} options={cfg} />
+      </div>
+      <div className="chart-stat-row">
+        <StatPill label="min" value={`${mn}µs`}  color="#86efac" />
+        <StatPill label="avg" value={`${avg}µs`} color="#c084fc" />
+        <StatPill label="max" value={`${mx}µs`}  color="#fbbf24" />
       </div>
     </div>
   )
@@ -522,6 +601,7 @@ function LayerPanelTabbed({ fieldKey, data, allData }) {
             {fieldKey === 'layer4' && (
               <>
                 <RttLineChart data={data} />
+                <InterPktDelayChart data={data} />
                 <FlagDonut data={data} />
               </>
             )}
@@ -544,7 +624,7 @@ function LayerPanelTabbed({ fieldKey, data, allData }) {
 // ── Overview: all charts when no tooth selected ───────────────────────────────
 function OverviewPanel({ allData }) {
   const [tab, setTab] = useState('radar')
-  const tabs = ['radar','rtt','flags','sizes','ttl']
+  const tabs = ['radar','rtt','delays','flags','sizes','ttl']
 
   return (
     <div className="tabbed-panel">
@@ -562,6 +642,7 @@ function OverviewPanel({ allData }) {
         <div className="charts-scroll">
           {tab === 'radar'  && <LayerRadar allData={allData} />}
           {tab === 'rtt'    && <RttLineChart data={allData?.layer4 ?? DEMO_DATA.layer4} />}
+          {tab === 'delays' && <InterPktDelayChart data={allData?.layer4 ?? DEMO_DATA.layer4} />}
           {tab === 'flags'  && <FlagDonut data={allData?.layer4 ?? DEMO_DATA.layer4} />}
           {tab === 'sizes'  && <FrameSizeHistogram data={allData?.layer2 ?? DEMO_DATA.layer2} />}
           {tab === 'ttl'    && <TtlGauge data={allData?.layer3 ?? DEMO_DATA.layer3} />}
