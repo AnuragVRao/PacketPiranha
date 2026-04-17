@@ -806,8 +806,14 @@ function OverviewPanel({ allData }) {
 
 // ── Stats full-page view ───────────────────────────────────────────────────────
 function StatsPage({ packet, onBack }) {
-  const data = packet ?? DEMO_DATA
+// Merge per-key: use live value if present, otherwise fall back to DEMO_DATA for that key
+  const data = packet
+    ? Object.fromEntries(
+        Object.keys(DEMO_DATA).map(k => [k, packet[k] ?? DEMO_DATA[k]])
+      )
+    : DEMO_DATA
   const isLive = !!packet
+
 
   const SECTION_COLORS = [
     '#38bdf8', '#86efac', '#c084fc', '#f472b6',
@@ -823,7 +829,7 @@ function StatsPage({ packet, onBack }) {
           <span className="stats-title-icon">⬡</span> PACKET ANALYTICS
         </div>
         <div className={`stats-badge ${isLive ? 'stats-badge-live' : 'stats-badge-demo'}`}>
-          {isLive ? '● LIVE DATA' : '○ DEMO DATA'}
+          {isLive ? '● LIVE DATA' : '○ LIVE DATA'}
         </div>
       </div>
 

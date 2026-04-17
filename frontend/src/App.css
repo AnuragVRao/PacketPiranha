@@ -346,13 +346,15 @@
 
 /* ── Stats full-page ──────────────────────────────────────────────────────── */
 .stats-page {
-  width: 100vw;
+  width: 100%;
   min-height: 100vh;
   background: #05091a;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden;
   overflow-y: auto;
 }
+
 
 .stats-header {
   position: sticky;
