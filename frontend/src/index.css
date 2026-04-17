@@ -7,12 +7,11 @@ body {
   font-family: 'Courier New', monospace;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow: hidden;
 }
 
 #root {
   width: 100vw;
-  height: 100vh;
+  min-height: 100vh;
   max-width: none;
   padding: 0;
   margin: 0;

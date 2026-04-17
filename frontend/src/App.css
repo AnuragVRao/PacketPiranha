@@ -343,3 +343,106 @@
   padding: 20px 0;
   text-align: center;
 }
+
+/* ── Stats full-page ──────────────────────────────────────────────────────── */
+.stats-page {
+  width: 100vw;
+  min-height: 100vh;
+  background: #05091a;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.stats-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 32px;
+  background: linear-gradient(90deg, rgba(5,9,26,0.98) 0%, rgba(8,18,46,0.97) 100%);
+  border-bottom: 1px solid #1a3f60;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 32px rgba(56,189,248,0.08);
+}
+
+.stats-back-btn {
+  flex-shrink: 0;
+}
+
+.stats-title {
+  font-family: 'Courier New', monospace;
+  font-size: 15px;
+  font-weight: bold;
+  letter-spacing: 6px;
+  color: #d4eeff;
+  text-transform: uppercase;
+  flex: 1;
+}
+
+.stats-title-icon {
+  color: #38bdf8;
+  margin-right: 4px;
+}
+
+.stats-badge {
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 2px;
+  padding: 5px 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.stats-badge-live {
+  color: #86efac;
+  background: rgba(134,239,172,0.08);
+  border: 1px solid rgba(134,239,172,0.3);
+}
+
+.stats-badge-demo {
+  color: #4d7a99;
+  background: rgba(77,122,153,0.08);
+  border: 1px solid rgba(77,122,153,0.3);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 20px;
+  padding: 28px 32px 48px;
+  align-items: start;
+}
+
+.stats-card {
+  background: linear-gradient(135deg, rgba(14,35,64,0.6) 0%, rgba(5,9,26,0.8) 100%);
+  border: 1px solid #1a3f60;
+  border-radius: 10px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.stats-card:hover {
+  border-color: rgba(56,189,248,0.4);
+  box-shadow: 0 0 24px rgba(56,189,248,0.07);
+}
+
+.stats-card-wide {
+  grid-column: 1 / -1;
+}
+
+.stats-card-section {
+  font-family: 'Courier New', monospace;
+  font-size: 9px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #38bdf8;
+  opacity: 0.7;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(26,63,96,0.5);
+}

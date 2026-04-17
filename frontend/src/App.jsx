@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { io } from 'socket.io-client'
 import {
   Chart as ChartJS,
@@ -40,6 +40,8 @@ const DEMO_DATA = {
     avgTTL: 57.3, minTTL: 55, maxTTL: 60, ttlVariance: 0.45,
     avgTotalLen: 44, dfSet: 10, mfSet: 0, fragmented: 0, uniqueIPIDs: 10,
     avgDSCP: 0, avgECN: 0,
+    protocolCounts: { TCP: 75, UDP: 20, ICMP: 5 },
+    topTalkers: { '192.168.1.42': 45, '1.1.1.1': 30, '10.0.0.5': 15, '8.8.8.8': 10 },
   },
   layer4: {
     protocol: 'TCP', dstPort: 12345, srcPort: 80,
@@ -47,20 +49,26 @@ const DEMO_DATA = {
     avgRTT_ms: 12.4, minRTT_ms: 10.1, maxRTT_ms: 15.9, rttJitter_ms: 1.8,
     avgWindowSize: 65535, minWindowSize: 65535, maxWindowSize: 65535,
     totalPackets: 10,
+    topDstPorts: { 443: 50, 80: 30, 53: 15, 22: 5 },
+    windowSizeSeries: [65535, 65535, 64240, 64240, 65000, 65535, 65535],
   },
   sessionPresentation: {
     flowID: '1.1.1.1 ↔ 192.168.1.42', sessionPackets: 10,
     sessionDuration_ms: 523, estimatedState: 'SYN_SENT → SYN_ACK received',
     encryptionHint: 'plaintext (port 80)', compressionHint: 'none detected',
+    sessionStates: { 'ESTABLISHED': 60, 'SYN_SENT': 10, 'TIME_WAIT': 15, 'CLOSED': 5 },
+    tlsVersions: { 'TLSv1.3': 70, 'TLSv1.2': 28, 'SSLv3': 2 },
   },
   layer7: {
     inferredProtocol: 'HTTP', description: 'Hypertext Transfer Protocol',
     destinationPort: 80, note: 'Application layer data not decoded (raw TCP SYN probes)',
+    statusCodes: { '2xx (OK)': 65, '3xx (Redir)': 12, '4xx (Client)': 8, '5xx (Server)': 3 },
   },
   kernelMetadata: {
     captureMethod: 'eBPF TC ingress classifier', ebpfProgram: 'tc_ingress / SCHED_CLS',
     captureSpan_ms: 500, packetsMatched: 10,
     pid: 'n/a (ingress)', note: 'TC ingress — no process attribution',
+    topProcesses: { 'nginx': 1500, 'node': 800, 'systemd-resolve': 300, 'sshd': 50 },
   },
   payload: {
     avgPayloadBytes: 0, minPayloadBytes: 0, maxPayloadBytes: 0,
@@ -150,16 +158,17 @@ function RttLineChart({ data }) {
   const { avgRTT_ms, minRTT_ms, maxRTT_ms, rttJitter_ms, totalPackets = 10 } = data
 
   // Use real per-packet RTT series if available, fall back to synthesised
-  const real = data.rttSeries?.filter(v => v != null)
-  const isSynthesised = !real || real.length < 2
-  const rttSeries = isSynthesised
-    ? Array.from({ length: Math.max(totalPackets, 5) }, (_, i) => {
-        const t = i / (Math.max(totalPackets, 5) - 1)
-        const base = minRTT_ms + (maxRTT_ms - minRTT_ms) * (0.5 + 0.5 * Math.sin(t * Math.PI * 2.3))
-        const jitter = (Math.random() - 0.5) * rttJitter_ms * 2
-        return +(base + jitter).toFixed(2)
-      })
-    : real
+  const isSynthesised = !data.rttSeries || data.rttSeries.filter(v => v != null).length < 2
+  const rttSeries = useMemo(() => {
+    const real = data.rttSeries?.filter(v => v != null)
+    if (real && real.length >= 2) return real;
+    return Array.from({ length: Math.max(totalPackets, 5) }, (_, i) => {
+      const t = i / (Math.max(totalPackets, 5) - 1)
+      const base = minRTT_ms + (maxRTT_ms - minRTT_ms) * (0.5 + 0.5 * Math.sin(t * Math.PI * 2.3))
+      const jitter = (Math.random() - 0.5) * rttJitter_ms * 2
+      return +(base + jitter).toFixed(2)
+    })
+  }, [data.rttSeries, totalPackets, minRTT_ms, maxRTT_ms, rttJitter_ms])
 
   const cfg = {
     ...CHART_BASE,
@@ -527,6 +536,118 @@ function LayerRadar({ allData }) {
   )
 }
 
+function SimpleHorizontalBar({ title, dataObj, color, xLabel }) {
+  if (!dataObj) return <NoData label={`No ${title} data`} />
+  const labels = Object.keys(dataObj)
+  const vals = Object.values(dataObj)
+  const cfg = {
+    ...CHART_BASE,
+    indexAxis: 'y',
+    scales: {
+      x: { ...AXIS_STYLE, title: { display: true, text: xLabel, color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+      y: { ...AXIS_STYLE, ticks: { ...AXIS_STYLE.ticks, autoSkip: false } },
+    },
+    plugins: { ...CHART_BASE.plugins, legend: { display: false } }
+  }
+  const chartData = {
+    labels,
+    datasets: [{ data: vals, backgroundColor: `${color}aa`, borderColor: color, borderWidth: 1, borderRadius: 2 }]
+  }
+  return (
+    <div className="chart-block">
+      <div className="chart-title">{title}</div>
+      <div className="chart-canvas-wrap" style={{ height: 150 }}>
+        <Bar data={chartData} options={cfg} />
+      </div>
+    </div>
+  )
+}
+
+function SimpleBar({ title, dataObj, color, yLabel }) {
+  if (!dataObj) return <NoData label={`No ${title} data`} />
+  const labels = Object.keys(dataObj)
+  const vals = Object.values(dataObj)
+  const cfg = {
+    ...CHART_BASE,
+    scales: {
+      x: { ...AXIS_STYLE },
+      y: { ...AXIS_STYLE, title: { display: true, text: yLabel, color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+    },
+    plugins: { ...CHART_BASE.plugins, legend: { display: false } }
+  }
+  const chartData = {
+    labels,
+    datasets: [{ data: vals, backgroundColor: `${color}aa`, borderColor: color, borderWidth: 1, borderRadius: 2 }]
+  }
+  return (
+    <div className="chart-block">
+      <div className="chart-title">{title}</div>
+      <div className="chart-canvas-wrap" style={{ height: 150 }}>
+        <Bar data={chartData} options={cfg} />
+      </div>
+    </div>
+  )
+}
+
+function SimpleDoughnut({ title, dataObj, colors }) {
+  if (!dataObj) return <NoData label={`No ${title} data`} />
+  const labels = Object.keys(dataObj)
+  const vals = Object.values(dataObj)
+  const cfg = {
+    ...CHART_BASE,
+    cutout: '55%',
+    plugins: { ...CHART_BASE.plugins, legend: { ...CHART_BASE.plugins.legend, position: 'right' } }
+  }
+  const chartData = {
+    labels,
+    datasets: [{ data: vals, backgroundColor: colors.map(c => c + 'cc'), borderColor: colors, borderWidth: 1.5, hoverBorderWidth: 2.5 }]
+  }
+  return (
+    <div className="chart-block">
+      <div className="chart-title">{title}</div>
+      <div className="chart-canvas-wrap" style={{ height: 160 }}>
+        <Doughnut data={chartData} options={cfg} />
+      </div>
+    </div>
+  )
+}
+
+function WindowSizeLineChart({ data }) {
+  const series = data?.windowSizeSeries
+  if (!series || series.length < 2) return <NoData label="No window size data" />
+  const avg = Math.round(series.reduce((a, b) => a + b, 0) / series.length)
+  const cfg = {
+    ...CHART_BASE,
+    scales: {
+      x: { ...AXIS_STYLE, title: { display: true, text: 'time', color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+      y: { ...AXIS_STYLE, title: { display: true, text: 'bytes', color: '#4d7a99', font: { family: "'Courier New', monospace", size: 9 } } },
+    },
+  }
+  const chartData = {
+    labels: series.map((_, i) => i + 1),
+    datasets: [
+      {
+        label: 'Window Size', data: series, borderColor: '#f472b6', backgroundColor: 'rgba(244,114,182,0.08)',
+        pointBackgroundColor: '#f472b6', pointRadius: 3, tension: 0.2, fill: true, borderWidth: 2,
+      },
+      {
+        label: `Avg ${avg}`, data: series.map(() => avg), borderColor: '#fbbf24', borderDash: [4, 4], pointRadius: 0, borderWidth: 1.5, fill: false,
+      }
+    ]
+  }
+  return (
+    <div className="chart-block">
+      <div className="chart-title">TCP Window Size Trend</div>
+      <div className="chart-canvas-wrap" style={{ height: 160 }}>
+        <Line data={chartData} options={cfg} />
+      </div>
+      <div className="chart-stat-row">
+        <StatPill label="avg size" value={`${avg}B`} color="#f472b6" />
+      </div>
+    </div>
+  )
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function StatPill({ label, value, color }) {
   return (
@@ -559,7 +680,7 @@ function KVList({ data }) {
 function LayerPanelTabbed({ fieldKey, data, allData }) {
   const [tab, setTab] = useState('stats')
 
-  const hasCharts = ['layer3','layer4','layer2'].includes(fieldKey) || fieldKey === 'overview'
+  const hasCharts = ['layer3','layer4','layer2','sessionPresentation','layer7','kernelMetadata'].includes(fieldKey) || fieldKey === 'overview'
   const tabs = hasCharts ? ['stats','charts'] : ['stats']
 
   // Flat KV data (strip nested objects)
@@ -600,6 +721,8 @@ function LayerPanelTabbed({ fieldKey, data, allData }) {
           <div className="charts-scroll">
             {fieldKey === 'layer4' && (
               <>
+                <SimpleHorizontalBar title="Top Destination Ports" dataObj={data?.topDstPorts} color="#38bdf8" xLabel="packets" />
+                <WindowSizeLineChart data={data} />
                 <RttLineChart data={data} />
                 <InterPktDelayChart data={data} />
                 <FlagDonut data={data} />
@@ -610,9 +733,23 @@ function LayerPanelTabbed({ fieldKey, data, allData }) {
             )}
             {fieldKey === 'layer3' && (
               <>
+                <SimpleDoughnut title="Protocol Distribution" dataObj={data?.protocolCounts} colors={['#38bdf8','#86efac','#f87171','#fbbf24']} />
+                <SimpleHorizontalBar title="Top Talkers (IPs)" dataObj={data?.topTalkers} color="#c084fc" xLabel="packets" />
                 <TtlGauge data={data} />
                 <FrameSizeHistogram data={data} />
               </>
+            )}
+            {fieldKey === 'sessionPresentation' && (
+              <>
+                <SimpleDoughnut title="Connection State Distribution" dataObj={data?.sessionStates} colors={['#86efac','#f87171','#fbbf24','#38bdf8']} />
+                <SimpleBar title="TLS Version Breakdown" dataObj={data?.tlsVersions} color="#fb923c" yLabel="count" />
+              </>
+            )}
+            {fieldKey === 'layer7' && (
+              <SimpleBar title="HTTP Status Code Breakdown" dataObj={data?.statusCodes} color="#38bdf8" yLabel="requests" />
+            )}
+            {fieldKey === 'kernelMetadata' && (
+              <SimpleHorizontalBar title="Top Processes by Packet Count" dataObj={data?.topProcesses} color="#f87171" xLabel="packets" />
             )}
           </div>
         )}
@@ -624,11 +761,11 @@ function LayerPanelTabbed({ fieldKey, data, allData }) {
 // ── Overview: all charts when no tooth selected ───────────────────────────────
 function OverviewPanel({ allData }) {
   const [tab, setTab] = useState('radar')
-  const tabs = ['radar','rtt','delays','flags','sizes','ttl']
+  const tabs = ['radar','proto','ports','states','http','procs']
 
   return (
     <div className="tabbed-panel">
-      <div className="tab-bar tab-bar-sm">
+      <div className="tab-bar tab-bar-sm" style={{ flexWrap: 'wrap' }}>
         {tabs.map(t => (
           <button
             key={t}
@@ -641,12 +778,169 @@ function OverviewPanel({ allData }) {
       <div className="tab-content">
         <div className="charts-scroll">
           {tab === 'radar'  && <LayerRadar allData={allData} />}
-          {tab === 'rtt'    && <RttLineChart data={allData?.layer4 ?? DEMO_DATA.layer4} />}
-          {tab === 'delays' && <InterPktDelayChart data={allData?.layer4 ?? DEMO_DATA.layer4} />}
-          {tab === 'flags'  && <FlagDonut data={allData?.layer4 ?? DEMO_DATA.layer4} />}
-          {tab === 'sizes'  && <FrameSizeHistogram data={allData?.layer2 ?? DEMO_DATA.layer2} />}
-          {tab === 'ttl'    && <TtlGauge data={allData?.layer3 ?? DEMO_DATA.layer3} />}
+          {tab === 'proto'  && (
+            <>
+              <SimpleDoughnut title="Protocol Distribution" dataObj={(allData ?? DEMO_DATA).layer3?.protocolCounts} colors={['#38bdf8','#86efac','#f87171','#fbbf24']} />
+              <SimpleHorizontalBar title="Top Talkers (IPs)" dataObj={(allData ?? DEMO_DATA).layer3?.topTalkers} color="#c084fc" xLabel="packets" />
+            </>
+          )}
+          {tab === 'ports'  && (
+            <>
+              <SimpleHorizontalBar title="Top Destination Ports" dataObj={(allData ?? DEMO_DATA).layer4?.topDstPorts} color="#38bdf8" xLabel="packets" />
+              <WindowSizeLineChart data={(allData ?? DEMO_DATA).layer4} />
+            </>
+          )}
+          {tab === 'states' && (
+            <>
+              <SimpleDoughnut title="Connection State Distribution" dataObj={(allData ?? DEMO_DATA).sessionPresentation?.sessionStates} colors={['#86efac','#f87171','#fbbf24','#38bdf8']} />
+              <SimpleBar title="TLS Version Breakdown" dataObj={(allData ?? DEMO_DATA).sessionPresentation?.tlsVersions} color="#fb923c" yLabel="count" />
+            </>
+          )}
+          {tab === 'http'   && <SimpleBar title="HTTP Status Code Breakdown" dataObj={(allData ?? DEMO_DATA).layer7?.statusCodes} color="#38bdf8" yLabel="requests" />}
+          {tab === 'procs'  && <SimpleHorizontalBar title="Top Processes by Packet Count" dataObj={(allData ?? DEMO_DATA).kernelMetadata?.topProcesses} color="#f87171" xLabel="packets" />}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Stats full-page view ───────────────────────────────────────────────────────
+function StatsPage({ packet, onBack }) {
+  const data = packet ?? DEMO_DATA
+  const isLive = !!packet
+
+  const SECTION_COLORS = [
+    '#38bdf8', '#86efac', '#c084fc', '#f472b6',
+    '#fbbf24', '#fb923c', '#f87171', '#34d399'
+  ]
+
+  return (
+    <div className="stats-page">
+      {/* Header */}
+      <div className="stats-header">
+        <button className="back-btn stats-back-btn" onClick={onBack}>← BACK</button>
+        <div className="stats-title">
+          <span className="stats-title-icon">⬡</span> PACKET ANALYTICS
+        </div>
+        <div className={`stats-badge ${isLive ? 'stats-badge-live' : 'stats-badge-demo'}`}>
+          {isLive ? '● LIVE DATA' : '○ DEMO DATA'}
+        </div>
+      </div>
+
+      {/* Grid */}
+      <div className="stats-grid">
+
+        {/* Layer Radar – full width */}
+        <div className="stats-card stats-card-wide">
+          <div className="stats-card-section">Overview · Layer Coverage</div>
+          <LayerRadar allData={data} />
+        </div>
+
+        {/* Protocol Distribution */}
+        <div className="stats-card">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[0] }}>L3 · Protocol</div>
+          <SimpleDoughnut
+            title="Protocol Distribution"
+            dataObj={data.layer3?.protocolCounts}
+            colors={['#38bdf8','#86efac','#f87171','#fbbf24']}
+          />
+        </div>
+
+        {/* Top Talkers */}
+        <div className="stats-card">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[1] }}>L3 · Top Talkers</div>
+          <SimpleHorizontalBar
+            title="Top Talkers (IPs)"
+            dataObj={data.layer3?.topTalkers}
+            color="#c084fc"
+            xLabel="packets"
+          />
+        </div>
+
+        {/* TTL Distribution */}
+        <div className="stats-card">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[2] }}>L3 · TTL</div>
+          <TtlGauge data={data.layer3} />
+        </div>
+
+        {/* Packet Size */}
+        <div className="stats-card">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[3] }}>L2/L3 · Frame Size</div>
+          <FrameSizeHistogram data={data.layer2 ?? data.layer3} />
+        </div>
+
+        {/* TCP Flags */}
+        <div className="stats-card">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[4] }}>L4 · TCP Flags</div>
+          <FlagDonut data={data.layer4} />
+        </div>
+
+        {/* Top Dst Ports */}
+        <div className="stats-card">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[5] }}>L4 · Dest Ports</div>
+          <SimpleHorizontalBar
+            title="Top Destination Ports"
+            dataObj={data.layer4?.topDstPorts}
+            color="#38bdf8"
+            xLabel="packets"
+          />
+        </div>
+
+        {/* RTT – wide */}
+        <div className="stats-card stats-card-wide">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[6] }}>L4 · Round-Trip Time</div>
+          <RttLineChart data={data.layer4} />
+        </div>
+
+        {/* Window Size – wide */}
+        <div className="stats-card stats-card-wide">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[7] }}>L4 · TCP Window Size</div>
+          <WindowSizeLineChart data={data.layer4} />
+        </div>
+
+        {/* Connection States */}
+        <div className="stats-card">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[0] }}>L5-6 · Session States</div>
+          <SimpleDoughnut
+            title="Connection State Distribution"
+            dataObj={data.sessionPresentation?.sessionStates}
+            colors={['#86efac','#f87171','#fbbf24','#38bdf8']}
+          />
+        </div>
+
+        {/* TLS Versions */}
+        <div className="stats-card">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[1] }}>L5-6 · TLS Versions</div>
+          <SimpleBar
+            title="TLS Version Breakdown"
+            dataObj={data.sessionPresentation?.tlsVersions}
+            color="#fb923c"
+            yLabel="count"
+          />
+        </div>
+
+        {/* HTTP Status */}
+        <div className="stats-card">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[2] }}>L7 · HTTP Status Codes</div>
+          <SimpleBar
+            title="HTTP Status Code Breakdown"
+            dataObj={data.layer7?.statusCodes}
+            color="#38bdf8"
+            yLabel="requests"
+          />
+        </div>
+
+        {/* Top Processes */}
+        <div className="stats-card">
+          <div className="stats-card-section" style={{ color: SECTION_COLORS[3] }}>Kernel · Top Processes</div>
+          <SimpleHorizontalBar
+            title="Top Processes by Packet Count"
+            dataObj={data.kernelMetadata?.topProcesses}
+            color="#f87171"
+            xLabel="packets"
+          />
+        </div>
+
       </div>
     </div>
   )
@@ -654,6 +948,7 @@ function OverviewPanel({ allData }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function App() {
+  const [view, setView] = useState('main') // 'main' | 'stats'
   const [packet,   setPacket]   = useState(null)
   const [status,   setStatus]   = useState('Click CAPTURE to begin')
   const [loading,  setLoading]  = useState(false)
@@ -754,6 +1049,10 @@ export default function App() {
     ? (packet ? packet[selField.key] : null) ?? DEMO_DATA[selField.key] ?? null
     : null
 
+  if (view === 'stats') {
+    return <StatsPage packet={packet} onBack={() => setView('main')} />
+  }
+
   return (
     <div className="container">
       {/* ── Gear ── */}
@@ -809,8 +1108,8 @@ export default function App() {
           </text>
         </svg>
 
-        {/* Overview shortcut */}
-        <button className="overview-btn" onClick={openOverview} title="Open stats overview">
+        {/* Stats page shortcut */}
+        <button className="overview-btn" onClick={() => setView('stats')} title="Open full stats dashboard">
           ⬡ STATS
         </button>
       </div>
