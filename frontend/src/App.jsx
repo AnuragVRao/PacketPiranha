@@ -806,10 +806,24 @@ function OverviewPanel({ allData }) {
 
 // ── Stats full-page view ───────────────────────────────────────────────────────
 function StatsPage({ packet, onBack }) {
-// Merge per-key: use live value if present, otherwise fall back to DEMO_DATA for that key
+  // Deep merge: for each top-level layer key, merge sub-keys so that any
+  // missing sub-key in the live packet falls back to the DEMO_DATA value.
   const data = packet
     ? Object.fromEntries(
-        Object.keys(DEMO_DATA).map(k => [k, packet[k] ?? DEMO_DATA[k]])
+        Object.keys(DEMO_DATA).map(k => {
+          const live = packet[k]
+          const demo = DEMO_DATA[k]
+          if (live == null) return [k, demo]
+          if (typeof live === 'object' && !Array.isArray(live) && typeof demo === 'object') {
+            // Spread demo first, then overlay non-null live sub-keys
+            const merged = { ...demo }
+            Object.entries(live).forEach(([sk, sv]) => {
+              if (sv != null) merged[sk] = sv
+            })
+            return [k, merged]
+          }
+          return [k, live]
+        })
       )
     : DEMO_DATA
   const isLive = !!packet
